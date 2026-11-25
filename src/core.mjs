@@ -17,13 +17,15 @@ export function defaultTokenFile() {
 }
 
 // Windows: the token file holds "dpapi:<base64>", encrypted for the current Windows user.
+// Also works from WSL through interop (powershell.exe), so WSL can share the Windows token file.
 function dpapi(op, input) {
+  const wslenv = process.platform === 'win32' ? {} : { WSLENV: [process.env.WSLENV, 'OPRUN_IN'].filter(Boolean).join(':') };
   const ps = `Add-Type -AssemblyName System.Security; $b=[Convert]::FromBase64String($env:OPRUN_IN); `
     + (op === 'protect'
       ? `[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect($b,$null,'CurrentUser'))`
       : `[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect($b,$null,'CurrentUser'))`);
   const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
-    env: { ...process.env, OPRUN_IN: Buffer.from(input, op === 'protect' ? 'utf8' : 'base64').toString('base64') },
+    env: { ...process.env, ...wslenv, OPRUN_IN: Buffer.from(input, op === 'protect' ? 'utf8' : 'base64').toString('base64') },
     encoding: 'utf8', windowsHide: true,
   });
   if (r.status !== 0) throw new Error(`DPAPI ${op} failed: ${(r.stderr || '').trim()}`);
