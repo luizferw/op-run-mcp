@@ -48,8 +48,13 @@ async function serve() {
       argv: z.array(z.string()).min(1).optional().describe('Alternative to command: program and arguments, run without a shell'),
       secrets: z.union([
         z.array(z.string()),
-        z.record(z.string(), z.string()),
-      ]).describe('Secret names from list_secrets, e.g. ["GITHUB_TOKEN"]; or a map {ENV_VAR: "NAME" | "NAME.field" | "op://vault/item/field"}'),
+        z.record(z.string(), z.union([
+          z.string(),
+          z.object({ item: z.string(), field: z.string().optional() }),
+        ])),
+      ]).describe('Item names that are variable names, e.g. ["GITHUB_TOKEN"]; or a map from env var to item: '
+        + '{"APP_USER": {"item": "Staging admin", "field": "username"}, "APP_PASS": {"item": "Staging admin", "field": "password"}}. '
+        + 'Map values may also be "Item title", "Item title.field" or "op://vault/item/field". Without a field, the item\'s primary field is used.'),
       cwd: z.string().optional().describe('Working directory'),
       timeout_seconds: z.number().int().min(1).max(600).optional().describe('Default 120, max 600'),
       shell: z.enum(['default', 'wsl']).optional().describe('"wsl" runs the command in WSL bash (Windows only)'),

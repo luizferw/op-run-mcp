@@ -23,7 +23,11 @@ There is no tool that reveals, edits or deletes a secret. You manage secrets in 
 ## Setup
 
 1. **In 1Password:** create a vault (e.g. `Agents`) and a service account with access only to it. Read-only is enough unless you want to use `import-env`.
-2. **Add secrets** to that vault. The item title is the secret name and must look like an env var (`GITHUB_TOKEN`, `OPENAI_API_KEY`). The value is taken from the field named `credential`, `password`, `token`, `api key`, `secret`, `key` or `value`, or else the first concealed field. An optional text field named `description` is shown to the agent.
+2. **Add items** to that vault, any kind:
+   - **Regular items** (Login, Database, API Credential…) with as many fields as you like, e.g. a Login `Staging admin` with `username` and `password`. The agent maps fields to variables when it runs a command.
+   - **Single-value secrets** whose title is a variable name (`GITHUB_TOKEN`) can be requested by name alone.
+
+   Without an explicit field, the value comes from the field named `credential`, `password`, `token`, `api key`, `secret`, `key` or `value`, or else the first concealed field. An optional text field named `description` is shown to the agent.
 3. **Install and store the token:**
 
    ```sh
@@ -68,7 +72,8 @@ There is no tool that reveals, edits or deletes a secret. You manage secrets in 
 `run_with_secrets` takes:
 
 - `command` (PowerShell on Windows, bash elsewhere) **or** `argv` (program + arguments, no shell);
-- `secrets`: `["GITHUB_TOKEN"]`, or a map such as `{ "GH_TOKEN": "GITHUB_TOKEN", "DB_USER": "POSTGRES.username", "X": "op://Agents/Item/field" }`;
+- `secrets`: `["GITHUB_TOKEN"]`, or a map from variable to item, such as
+  `{ "APP_USER": { "item": "Staging admin", "field": "username" }, "APP_PASS": { "item": "Staging admin", "field": "password" }, "GH_TOKEN": "GITHUB_TOKEN", "X": "op://Agents/Item/field" }`;
 - optional `cwd`, `timeout_seconds` (default 120, max 600; kills the whole process tree), `shell: "wsl"`.
 
 Command line, same logic:

@@ -27,10 +27,30 @@ test('primaryField prefers well-known field names, then concealed', () => {
   assert.equal(primaryField(items.i3).value, 'pg-pass-9876');
 });
 
+test('regular items (logins) map fields to variables', async () => {
+  items.i4 = { id: 'i4', title: 'Staging admin v1.2', vaultId: 'v1', category: 'Login', websites: [{ url: 'https://staging.example.com' }], fields: [
+    { id: 'username', title: 'username', fieldType: 'Text', value: 'admin@example.com' },
+    { id: 'password', title: 'password', fieldType: 'Concealed', value: 'login-pass-123' },
+  ] };
+  try {
+    const c = new Catalogue(fake, { vaults: ['Agents'] });
+    const { env } = await c.resolve({
+      U: { item: 'Staging admin v1.2', field: 'username' },
+      P: 'Staging admin v1.2',
+      P2: 'Staging admin v1.2.password',
+    });
+    assert.deepEqual(env, { U: 'admin@example.com', P: 'login-pass-123', P2: 'login-pass-123' });
+    const listed = (await c.list()).find((x) => x.name === 'Staging admin v1.2');
+    assert.deepEqual(listed.fields, ['username', 'password']);
+    assert.deepEqual(listed.websites, ['https://staging.example.com']);
+    await assert.rejects(c.resolve(['Staging admin v1.2']), /pass a map/);
+  } finally { delete items.i4; }
+});
+
 test('list exposes names, never values, and honours the vault allow-list', async () => {
   const c = new Catalogue(fake, { vaults: ['Agents'] });
   const list = await c.list();
-  assert.deepEqual(list.map((x) => x.name), ['GITHUB_TOKEN']);
+  assert.deepEqual(list.map((x) => x.name), ['GITHUB_TOKEN', 'Not an env name']);
   assert.equal(list[0].description, 'GitHub API');
   assert.ok(!JSON.stringify(list).includes('ghp_'));
 });

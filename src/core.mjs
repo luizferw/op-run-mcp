@@ -99,11 +99,11 @@ export class Catalogue {
     return out;
   }
 
-  // Names are item titles; only titles that are valid env var names are exposed by name.
+  // Every item is listed: env-style secrets (title = variable name) and regular items
+  // such as logins or databases, whose fields are mapped to variables by the caller.
   async list() {
     const res = [];
     for (const o of await this.items()) {
-      if (!ENV_NAME.test(o.title)) continue;
       const item = await this.client.items.get(o.vaultId, o.id);
       const p = primaryField(item);
       res.push({
@@ -111,36 +111,61 @@ export class Catalogue {
         vault: o.vaultTitle,
         category: o.category,
         primary_field: p?.title || null,
-        fields: item.fields.filter((f) => f.value).map((f) => f.title),
+        fields: item.fields.filter((f) => f.value && !DESCRIPTION_FIELDS.includes(norm(f.title))).map((f) => f.title),
+        websites: (o.websites || []).map((w) => w.url).filter(Boolean),
         description: description(item),
       });
     }
     return res.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  // spec: ["NAME", ...] or { ENV_VAR: "NAME" | "NAME.field" | "op://vault/item/field" }
+  // spec: ["NAME", ...] (titles that are env var names)
+  //   or { ENV_VAR: "Item title" | "Item title.field" | { item, field? } | "op://vault/item/field" }
   async resolve(spec) {
     const wanted = Array.isArray(spec) ? Object.fromEntries(spec.map((n) => [n, n])) : spec;
     const env = {};
     const missing = [];
     for (const [envName, ref] of Object.entries(wanted)) {
-      if (!ENV_NAME.test(envName)) throw new Error(`Invalid environment variable name: ${envName}`);
-      if (ref.startsWith('op://')) {
+      if (!ENV_NAME.test(envName)) {
+        throw new Error(`Invalid environment variable name: ${envName}. For items whose title is not a variable name, pass a map such as {"APP_PASSWORD": {"item": "${envName}", "field": "password"}}.`);
+      }
+      if (typeof ref === 'string' && ref.startsWith('op://')) {
         await this.assertAllowedRef(ref);
         env[envName] = await this.client.secrets.resolve(ref);
         continue;
       }
-      const [title, fieldName] = ref.split(/\.(.+)/);
-      const o = (await this.items()).find((x) => x.title === title);
-      if (!o) { missing.push(ref); continue; }
-      const item = await this.client.items.get(o.vaultId, o.id);
-      const f = fieldName
-        ? item.fields.find((x) => norm(x.title) === norm(fieldName) || x.id === fieldName)
+      const label = typeof ref === 'string' ? ref : `${ref.item}${ref.field ? `.${ref.field}` : ''}`;
+      const found = await this.find(ref);
+      if (!found) { missing.push(label); continue; }
+      const item = await this.client.items.get(found.item.vaultId, found.item.id);
+      const f = found.field
+        ? item.fields.find((x) => norm(x.title) === norm(found.field) || x.id === found.field)
         : primaryField(item);
-      if (!f?.value) { missing.push(ref); continue; }
+      if (!f?.value) { missing.push(label); continue; }
       env[envName] = f.value;
     }
     return { env, missing };
+  }
+
+  // "Title" or "Title.field" (titles may contain dots: the exact title wins, then the last dot splits).
+  async find(ref) {
+    const items = await this.items();
+    const byTitle = (t) => items.filter((x) => x.title === t);
+    const one = (t) => {
+      const hits = byTitle(t);
+      if (hits.length > 1) throw new Error(`More than one item titled "${t}"; use an op:// reference with the vault`);
+      return hits[0];
+    };
+    if (typeof ref === 'object') {
+      const item = one(ref.item);
+      return item ? { item, field: ref.field } : null;
+    }
+    const exact = one(ref);
+    if (exact) return { item: exact };
+    const dot = ref.lastIndexOf('.');
+    if (dot < 1) return null;
+    const item = one(ref.slice(0, dot));
+    return item ? { item, field: ref.slice(dot + 1) } : null;
   }
 
   async assertAllowedRef(ref) {
