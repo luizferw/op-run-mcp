@@ -85,6 +85,9 @@ node src/index.mjs run GITHUB_TOKEN -- gh api user
 # copy env vars of this process into new items (needs write access to the vault);
 # --descriptions takes a JSON file {"NAME": "description"}
 node src/index.mjs import-env --vault Agents GITHUB_TOKEN OPENAI_API_KEY
+# back up .env files: one item per file, a concealed field per variable + the whole file
+node src/index.mjs backup-env --vault Agents apps/api/.env apps/web/.env
+node src/index.mjs restore-env ".env · my-repo/apps/api/.env" apps/api/.env
 ```
 
 ## Security notes

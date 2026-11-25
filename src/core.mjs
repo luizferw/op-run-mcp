@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PRIMARY_FIELDS = ['credential', 'password', 'token', 'api key', 'apikey', 'secret', 'key', 'value'];
 const DESCRIPTION_FIELDS = ['description', 'descricao', 'descrição', 'notes'];
@@ -293,4 +293,25 @@ export function run({ command, argv, env, cwd, timeoutSeconds = 120, shell = 'de
     child.on('error', (e) => done(null, `\n${e.message}`));
     child.on('close', (c) => done(c));
   });
+}
+
+// Minimal dotenv parser: KEY=value, optional export, single/double quotes (double quotes may span lines).
+export function parseDotenv(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/);
+    if (!m) continue;
+    let raw = m[2].trim();
+    const q = raw[0];
+    if ((q === '"' || q === "'") && !(raw.length >= 2 && raw.endsWith(q))) {
+      while (i + 1 < lines.length) { raw += `\n${lines[++i]}`; if (lines[i].trimEnd().endsWith(q)) break; }
+    }
+    let value;
+    if (raw.length >= 2 && raw[0] === "'" && raw.endsWith("'")) value = raw.slice(1, -1);
+    else if (raw.length >= 2 && raw[0] === '"' && raw.endsWith('"')) value = raw.slice(1, -1).replace(/\n/g, '\n').replace(/\(["\$`])/g, '$1');
+    else value = raw.replace(/\s+#.*$/, '');
+    out.push({ name: m[1], value });
+  }
+  return out;
 }

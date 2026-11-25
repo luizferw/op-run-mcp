@@ -1,6 +1,6 @@
 {
   "name": "op-run-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server that runs commands with 1Password secrets injected as environment variables, without ever showing the values to the agent.",
   "type": "module",
   "bin": {

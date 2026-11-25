@@ -124,3 +124,12 @@ test('capture keeps stdout apart and masks it in stderr', async () => {
 test('rejects command and argv together', () => {
   assert.throws(() => run({ command: 'x', argv: ['y'], env: {} }), /exactly one/);
 });
+
+test('parseDotenv handles export, quotes, comments and multi-line values', async () => {
+  const { parseDotenv } = await import('../src/core.mjs');
+  const vars = parseDotenv('# c\nexport A=1\nB="x y"\nC=\'q#z\'\nD=plain # note\nE="l1\nl2"\n#F=no\nG=\n');
+  assert.deepEqual(vars, [
+    { name: 'A', value: '1' }, { name: 'B', value: 'x y' }, { name: 'C', value: 'q#z' },
+    { name: 'D', value: 'plain' }, { name: 'E', value: 'l1\nl2' }, { name: 'G', value: '' },
+  ]);
+});

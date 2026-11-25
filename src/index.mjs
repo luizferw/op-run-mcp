@@ -6,13 +6,17 @@
 //   op-run-mcp store-token             read a service account token from stdin and store it
 //   op-run-mcp list                    print the secret catalogue (names only)
 //   op-run-mcp run NAME[,NAME] -- cmd  run a command with secrets, output masked
+//   op-run-mcp backup-env [--vault V] FILE...   save .env files (one field per variable + whole file)
+//   op-run-mcp restore-env [--vault V] TITLE FILE
 //   op-run-mcp import-env --vault V [--descriptions file.json] NAME [NAME...]
 //                                      copy env vars of this process into 1Password items (needs write access)
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { z } from 'zod';
-import { Catalogue, ENV_NAME, VERSION, capture, connect, run, storeToken } from './core.mjs';
+import { Catalogue, ENV_NAME, VERSION, capture, connect, parseDotenv, run, storeToken } from './core.mjs';
 
 const vaults = (process.env.OP_VAULTS || '').split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -151,6 +155,83 @@ async function importEnv(args) {
   }
 }
 
+// ".env · repo/sub/dir/.env", or "repo@worktree/..." for a git worktree; falls back to the absolute path.
+function envTitle(file) {
+  const abs = path.resolve(file);
+  const git = (...a) => spawnSync('git', ['-C', path.dirname(abs), ...a], { encoding: 'utf8' }).stdout?.trim();
+  const top = git('rev-parse', '--show-toplevel');
+  if (!top) return `.env · ${abs}`;
+  const common = path.resolve(path.dirname(abs), git('rev-parse', '--git-common-dir'));
+  const repo = path.basename(path.dirname(common));
+  const wt = path.basename(top) === repo ? '' : `@${path.basename(top)}`;
+  return `.env · ${repo}${wt}/${path.relative(top, abs).split(path.sep).join('/')}`;
+}
+
+function takeOpt(args, flag) {
+  const i = args.indexOf(flag);
+  return i < 0 ? null : args.splice(i, 2)[1];
+}
+
+async function envVault(client, name) {
+  const all = await client.vaults.list();
+  const wanted = name || vaults[0];
+  const v = wanted ? all.find((x) => x.title === wanted || x.id === wanted) : all.length === 1 ? all[0] : null;
+  if (!v) throw new Error(wanted ? `Vault not found or not accessible: ${wanted}` : 'Pass --vault (or set OP_VAULTS)');
+  return v;
+}
+
+// Save each .env file as one item: a concealed field per variable plus the whole file (for an exact restore).
+async function backupEnv(args) {
+  const vaultName = takeOpt(args, '--vault');
+  const title = takeOpt(args, '--title');
+  if (!args.length) throw new Error('Usage: op-run-mcp backup-env [--vault V] [--title T] FILE [FILE...]');
+  if (title && args.length > 1) throw new Error('--title only works with a single file');
+  const client = await connect();
+  const vault = await envVault(client, vaultName);
+  const existing = await client.items.list(vault.id);
+  for (const file of args) {
+    const content = fs.readFileSync(file, 'utf8');
+    const vars = new Map(parseDotenv(content).map((v) => [v.name, v.value]));
+    const t = title || envTitle(file);
+    const fields = [
+      { id: 'dotenv', title: 'dotenv', fieldType: 'Concealed', value: content },
+      { id: 'path', title: 'path', fieldType: 'Text', value: path.resolve(file) },
+      ...[...vars].filter(([, v]) => v !== '').map(([name, value]) => ({ id: `v_${name}`, title: name, fieldType: 'Concealed', value })),
+      { id: 'description', title: 'description', fieldType: 'Text',
+        value: `Backup do ${path.basename(file)} em ${path.resolve(file)}: um campo por variável e o arquivo inteiro em "dotenv". Restaurar: op-run-mcp restore-env "${t}" <arquivo>.` },
+    ];
+    const hits = existing.filter((o) => o.title === t);
+    if (hits.length > 1) throw new Error(`More than one item titled "${t}"`);
+    let id;
+    if (hits.length) {
+      const item = await client.items.get(vault.id, hits[0].id);
+      item.fields = fields;
+      id = (await client.items.put(item)).id;
+    } else {
+      id = (await client.items.create({ category: 'SecureNote', vaultId: vault.id, title: t, fields, tags: ['op-run-mcp', 'dotenv'] })).id;
+    }
+    const back = (await client.items.get(vault.id, id)).fields.find((f) => f.id === 'dotenv')?.value;
+    if (back !== content) throw new Error(`Verification failed for ${t}`);
+    console.log(`${hits.length ? 'updated' : 'saved'} "${t}" (${vars.size} variables, verified)`);
+  }
+}
+
+async function restoreEnv(args) {
+  const force = args.includes('--force');
+  const vaultName = takeOpt(args, '--vault');
+  const [title, file] = args.filter((a) => a !== '--force');
+  if (!title || !file) throw new Error('Usage: op-run-mcp restore-env [--vault V] [--force] TITLE FILE');
+  if (fs.existsSync(file) && !force) throw new Error(`${file} exists; pass --force to overwrite`);
+  const client = await connect();
+  const vault = await envVault(client, vaultName);
+  const o = (await client.items.list(vault.id)).find((x) => x.title === title);
+  if (!o) throw new Error(`Item not found: ${title}`);
+  const content = (await client.items.get(vault.id, o.id)).fields.find((f) => f.id === 'dotenv')?.value;
+  if (content === undefined) throw new Error(`"${title}" has no dotenv field`);
+  fs.writeFileSync(file, content, { mode: 0o600 });
+  console.log(`restored "${title}" to ${file}`);
+}
+
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
   if (!cmd) return serve();
@@ -172,6 +253,8 @@ async function main() {
     return;
   }
   if (cmd === 'import-env') return importEnv(args);
+  if (cmd === 'backup-env') return backupEnv(args);
+  if (cmd === 'restore-env') return restoreEnv(args);
   throw new Error(`Unknown command: ${cmd}`);
 }
 
