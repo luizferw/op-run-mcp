@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Catalogue, mask, primaryField, run } from '../src/core.mjs';
+import { Catalogue, capture, mask, primaryField, run } from '../src/core.mjs';
 
 const items = {
   i1: { id: 'i1', title: 'GITHUB_TOKEN', vaultId: 'v1', category: 'ApiCredentials', fields: [
@@ -89,6 +89,36 @@ test('timeout kills the process tree', async () => {
   const r = await run({ argv: [process.execPath, '-e', child], env: {}, timeoutSeconds: 1 });
   assert.equal(r.timedOut, true);
   assert.ok(Date.now() - started < 15_000, 'run() returned only after the grandchild exited');
+});
+
+test('save creates, refuses silent overwrite, then updates', async () => {
+  const store = {};
+  let n = 0;
+  const w = {
+    vaults: { list: async () => [{ id: 'v1', title: 'Agents' }] },
+    items: {
+      list: async () => Object.values(store).map(({ fields, ...o }) => o),
+      get: async (_v, id) => structuredClone(store[id]),
+      create: async (p) => { const id = `n${++n}`; store[id] = { id, vaultId: p.vaultId, title: p.title, category: p.category, fields: p.fields, websites: p.websites || [] }; return store[id]; },
+      put: async (item) => { store[item.id] = item; return item; },
+    },
+  };
+  const c = new Catalogue(w, { vaults: ['Agents'] });
+  assert.deepEqual(await c.save({ item: 'NEW_TOKEN', value: 'tok-1234567' }), { action: 'created', item: 'NEW_TOKEN', field: 'credential', vault: 'Agents' });
+  assert.equal((await c.resolve(['NEW_TOKEN'])).env.NEW_TOKEN, 'tok-1234567');
+  await assert.rejects(c.save({ item: 'NEW_TOKEN', value: 'other' }), /overwrite/);
+  assert.equal((await c.save({ item: 'NEW_TOKEN', value: 'tok-999', overwrite: true })).action, 'updated');
+  assert.equal((await c.save({ item: 'NEW_TOKEN', field: 'username', value: 'bot', concealed: false })).action, 'field added');
+  assert.deepEqual((await c.resolve({ T: 'NEW_TOKEN', U: 'NEW_TOKEN.username' })).env, { T: 'tok-999', U: 'bot' });
+  await assert.rejects(c.save({ item: 'X', value: 'v', vault: 'Private' }), /not allowed/);
+  await assert.rejects(c.save({ item: 'X', value: '' }), /empty/);
+});
+
+test('capture keeps stdout apart and masks it in stderr', async () => {
+  const js = 'process.stdout.write("new-secret-value-42"); console.error("made new-secret-value-42")';
+  const r = await capture({ argv: [process.execPath, '-e', js], env: {} });
+  assert.equal(r.stdout, 'new-secret-value-42');
+  assert.equal(r.output.trim(), 'made [secret captured]');
 });
 
 test('rejects command and argv together', () => {

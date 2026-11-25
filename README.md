@@ -2,14 +2,15 @@
 
 A small [MCP](https://modelcontextprotocol.io/) server that lets AI coding agents (Claude Code, Codex, Cursor…) **use** secrets stored in 1Password without ever **seeing** them.
 
-The agent gets two tools:
+The agent gets three tools:
 
 | Tool | What it does |
 |------|--------------|
 | `list_secrets` | Names, vault, field names and description of the secrets it may use. Never values. |
 | `run_with_secrets` | Runs a command with the chosen secrets as environment variables and returns the output with every value replaced by `[secret NAME]`. |
+| `save_secret` | Creates an item or sets one field. The value comes from a file (deleted afterwards), from a command's stdout (never shown to the agent), or literally when the user already pasted it. Replacing an existing value needs `overwrite: true`. |
 
-There is no tool that reveals, edits or deletes a secret. You manage secrets in the 1Password app; the agent only runs things with them.
+There is no tool that reveals or deletes a secret. You see and manage everything in the 1Password app.
 
 > Not an official 1Password product. Built on the official [1Password JavaScript SDK](https://github.com/1Password/onepassword-sdk-js).
 
@@ -22,7 +23,7 @@ There is no tool that reveals, edits or deletes a secret. You manage secrets in 
 
 ## Setup
 
-1. **In 1Password:** create a vault (e.g. `Agents`) and a service account with access only to it. Read-only is enough unless you want to use `import-env`.
+1. **In 1Password:** create a vault (e.g. `Agents`) and a service account with access only to it. Give it write access if agents should store secrets with `save_secret` (or you use `import-env`); read-only otherwise.
 2. **Add items** to that vault, any kind:
    - **Regular items** (Login, Database, API Credential…) with as many fields as you like, e.g. a Login `Staging admin` with `username` and `password`. The agent maps fields to variables when it runs a command.
    - **Single-value secrets** whose title is a variable name (`GITHUB_TOKEN`) can be requested by name alone.

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PRIMARY_FIELDS = ['credential', 'password', 'token', 'api key', 'apikey', 'secret', 'key', 'value'];
 const DESCRIPTION_FIELDS = ['description', 'descricao', 'descrição', 'notes'];
@@ -168,6 +168,43 @@ export class Catalogue {
     return item ? { item, field: ref.slice(dot + 1) } : null;
   }
 
+  // Create an item or set one field of an existing item. Returns what was done, never the value.
+  async save({ item: title, field = 'credential', value, concealed = true, category = 'ApiCredentials', vault, description: desc, website, overwrite = false }) {
+    if (!title?.trim()) throw new Error('item title is required');
+    if (!field?.trim()) throw new Error('field is required');
+    if (!value) throw new Error('empty value, nothing saved');
+    const vaults = await this.vaults();
+    const target = vault ? vaults.find((v) => norm(v.title) === norm(vault) || v.id === vault) : vaults[0];
+    if (!target) throw new Error(vault ? `Vault not allowed or not accessible: ${vault}` : 'No accessible vault');
+    if (!vault && vaults.length > 1) throw new Error(`More than one vault is accessible (${vaults.map((v) => v.title).join(', ')}); pass vault`);
+    this.cache = null;
+    const existing = (await this.client.items.list(target.id)).filter((o) => o.title === title);
+    if (existing.length > 1) throw new Error(`More than one item titled "${title}" in ${target.title}`);
+    const fieldType = concealed ? 'Concealed' : 'Text';
+    const descField = (text) => ({ id: 'description', title: 'description', fieldType: 'Text', value: text });
+    if (!existing.length) {
+      await this.client.items.create({
+        category, vaultId: target.id, title, tags: ['op-run-mcp'],
+        websites: website ? [{ url: website, label: 'website', autofillBehavior: 'AnywhereOnWebsite' }] : undefined,
+        fields: [{ id: field.replace(/\W+/g, '_'), title: field, fieldType, value }, ...(desc ? [descField(desc)] : [])],
+      });
+      return { action: 'created', item: title, field, vault: target.title };
+    }
+    const item = await this.client.items.get(target.id, existing[0].id);
+    const f = item.fields.find((x) => norm(x.title) === norm(field) || x.id === field);
+    if (f?.value && !overwrite) throw new Error(`Field "${field}" of "${title}" already has a value; pass overwrite: true to replace it`);
+    if (f) { f.value = value; f.fieldType = fieldType; } else item.fields.push({ id: field.replace(/\W+/g, '_'), title: field, fieldType, value });
+    if (desc) {
+      const d = item.fields.find((x) => x.title === 'description');
+      if (d) d.value = desc; else item.fields.push(descField(desc));
+    }
+    if (website && !item.websites?.some((w) => w.url === website)) {
+      item.websites = [...(item.websites || []), { url: website, label: 'website', autofillBehavior: 'AnywhereOnWebsite' }];
+    }
+    await this.client.items.put(item);
+    return { action: f ? 'updated' : 'field added', item: title, field, vault: target.title };
+  }
+
   async assertAllowedRef(ref) {
     if (!this.allowed.length) return;
     const vault = decodeURIComponent(ref.slice(5).split('/')[0]);
@@ -200,7 +237,13 @@ function killTree(child) {
   } catch { child.kill('SIGKILL'); }
 }
 
-export function run({ command, argv, env, cwd, timeoutSeconds = 120, shell = 'default', maxOutput = 1_000_000 }) {
+// Run a command and keep its stdout apart: the caller stores it as a secret value.
+// Returns { exitCode, timedOut, stdout, output } where output is stderr, masked with the stdout value.
+export function capture(opts) {
+  return run({ ...opts, captureStdout: true });
+}
+
+export function run({ command, argv, env, cwd, timeoutSeconds = 120, shell = 'default', maxOutput = 1_000_000, captureStdout = false }) {
   if (!command === !argv?.length) throw new Error('Pass exactly one of command or argv');
   const names = Object.keys(env);
   const base = { ...process.env, ...env };
@@ -224,6 +267,7 @@ export function run({ command, argv, env, cwd, timeoutSeconds = 120, shell = 'de
   child.stdin.end();
   return new Promise((resolve) => {
     const chunks = [];
+    const out = [];
     let size = 0;
     let truncated = false;
     let timedOut = false;
@@ -232,7 +276,7 @@ export function run({ command, argv, env, cwd, timeoutSeconds = 120, shell = 'de
       if (size > maxOutput * 2) { truncated = true; return; }
       chunks.push(d); size += d.length;
     };
-    child.stdout.on('data', collect);
+    child.stdout.on('data', captureStdout ? (d) => out.push(d) : collect);
     child.stderr.on('data', collect);
     const timer = setTimeout(() => { timedOut = true; killTree(child); }, Math.min(timeoutSeconds, 600) * 1000);
     let finished = false;
@@ -240,9 +284,11 @@ export function run({ command, argv, env, cwd, timeoutSeconds = 120, shell = 'de
       if (finished) return;
       finished = true;
       clearTimeout(timer);
-      let out = mask(Buffer.concat(chunks).toString('utf8') + extra, env);
-      if (truncated || out.length > maxOutput) out = `${out.slice(0, maxOutput)}\n[output truncated]`;
-      resolve({ exitCode: code, timedOut, output: out });
+      const stdout = captureStdout ? Buffer.concat(out).toString('utf8') : undefined;
+      const secrets = captureStdout ? { ...env, captured: stdout.trim() } : env;
+      let text = mask(Buffer.concat(chunks).toString('utf8') + extra, secrets);
+      if (truncated || text.length > maxOutput) text = `${text.slice(0, maxOutput)}\n[output truncated]`;
+      resolve({ exitCode: code, timedOut, output: text, ...(captureStdout ? { stdout } : {}) });
     };
     child.on('error', (e) => done(null, `\n${e.message}`));
     child.on('close', (c) => done(c));
