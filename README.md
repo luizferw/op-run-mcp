@@ -34,6 +34,8 @@ There is no tool that reveals, edits or deletes a secret. You manage secrets in 
 
    The token is written to `%APPDATA%\op-run-mcp\token` encrypted with DPAPI (Windows), or to `~/.config/op-run-mcp/token` with mode `600` (Linux/macOS).
 
+   **WSL:** instead of a second plaintext copy, point WSL at the Windows file (`OP_TOKEN_FILE=/mnt/c/Users/<you>/AppData/Roaming/op-run-mcp/token`). It is decrypted through `powershell.exe` interop.
+
 4. **Register the server.**
 
    Claude Code:
