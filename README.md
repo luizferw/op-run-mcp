@@ -74,7 +74,8 @@ Command line, same logic:
 ```sh
 node src/index.mjs list
 node src/index.mjs run GITHUB_TOKEN -- gh api user
-# copy env vars of this process into new items (needs write access to the vault)
+# copy env vars of this process into new items (needs write access to the vault);
+# --descriptions takes a JSON file {"NAME": "description"}
 node src/index.mjs import-env --vault Agents GITHUB_TOKEN OPENAI_API_KEY
 ```
 

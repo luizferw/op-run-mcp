@@ -6,10 +6,11 @@
 //   op-run-mcp store-token             read a service account token from stdin and store it
 //   op-run-mcp list                    print the secret catalogue (names only)
 //   op-run-mcp run NAME[,NAME] -- cmd  run a command with secrets, output masked
-//   op-run-mcp import-env --vault V NAME [NAME...]
+//   op-run-mcp import-env --vault V [--descriptions file.json] NAME [NAME...]
 //                                      copy env vars of this process into 1Password items (needs write access)
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import fs from 'node:fs';
 import { z } from 'zod';
 import { Catalogue, ENV_NAME, VERSION, connect, run, storeToken } from './core.mjs';
 
@@ -74,10 +75,12 @@ async function readStdin() {
 }
 
 async function importEnv(args) {
-  const i = args.indexOf('--vault');
-  if (i < 0 || !args[i + 1]) throw new Error('Usage: op-run-mcp import-env --vault VAULT NAME [NAME...]');
-  const vaultName = args[i + 1];
-  const names = args.filter((_, j) => j !== i && j !== i + 1);
+  const opt = (flag) => { const i = args.indexOf(flag); return i < 0 ? null : args.splice(i, 2)[1]; };
+  const vaultName = opt('--vault');
+  const descFile = opt('--descriptions');
+  if (!vaultName) throw new Error('Usage: op-run-mcp import-env --vault VAULT [--descriptions file.json] NAME [NAME...]');
+  const descriptions = descFile ? JSON.parse(fs.readFileSync(descFile, 'utf8')) : {};
+  const names = args;
   const client = await connect();
   const vault = (await client.vaults.list()).find((v) => v.title === vaultName || v.id === vaultName);
   if (!vault) throw new Error(`Vault not found or not accessible: ${vaultName}`);
@@ -88,7 +91,10 @@ async function importEnv(args) {
     if (existing.has(name)) { console.log(`skip ${name}: item already exists`); continue; }
     await client.items.create({
       category: 'ApiCredentials', vaultId: vault.id, title: name,
-      fields: [{ id: 'credential', title: 'credential', fieldType: 'Concealed', value: process.env[name] }],
+      fields: [
+        { id: 'credential', title: 'credential', fieldType: 'Concealed', value: process.env[name] },
+        ...(descriptions[name] ? [{ id: 'description', title: 'description', fieldType: 'Text', value: descriptions[name] }] : []),
+      ],
       tags: ['op-run-mcp'],
     });
     console.log(`created ${name}`);
