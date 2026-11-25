@@ -309,7 +309,7 @@ export function parseDotenv(text) {
     }
     let value;
     if (raw.length >= 2 && raw[0] === "'" && raw.endsWith("'")) value = raw.slice(1, -1);
-    else if (raw.length >= 2 && raw[0] === '"' && raw.endsWith('"')) value = raw.slice(1, -1).replace(/\n/g, '\n').replace(/\(["\$`])/g, '$1');
+    else if (raw.length >= 2 && raw[0] === '"' && raw.endsWith('"')) value = raw.slice(1, -1).replace(/\\n/g, '\n').replace(/\\(["\\$`])/g, '$1');
     else value = raw.replace(/\s+#.*$/, '');
     out.push({ name: m[1], value });
   }
